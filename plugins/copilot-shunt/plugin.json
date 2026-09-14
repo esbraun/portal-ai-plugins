@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "copilot-shunt",
+  "version": "0.1.0",
+  "description": "Routes large reads and predictable code generation to focused GitHub Copilot CLI subagents without requiring Spotify Portal.",
+  "author": {
+    "name": "Spotify"
+  },
+  "homepage": "https://github.com/spotify/portal-ai-plugins/tree/main/plugins/copilot-shunt",
+  "repository": "https://github.com/spotify/portal-ai-plugins",
+  "license": "Apache-2.0",
+  "keywords": [
+    "github-copilot",
+    "token-optimization",
+    "model-routing",
+    "delegation"
+  ]
+}

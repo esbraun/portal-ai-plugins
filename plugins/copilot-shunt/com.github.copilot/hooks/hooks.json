@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "view|bash",
+        "bash": "bash \"${PLUGIN_ROOT}/scripts/check-large-read.sh\"",
+        "cwd": ".",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}
