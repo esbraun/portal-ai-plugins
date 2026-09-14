@@ -7,6 +7,8 @@ COPILOT_BIN="${COPILOT_BIN:-copilot}"
 EXPECTED_VERSION="${COPILOT_SHUNT_EXPECTED_VERSION:-1.0.83}"
 WORKDIR=$(mktemp -d)
 trap 'rm -rf "$WORKDIR"' EXIT
+export COPILOT_HOME="$WORKDIR/copilot-home"
+mkdir -p "$COPILOT_HOME"
 
 for dependency in "$COPILOT_BIN" jq node; do
   command -v "$dependency" >/dev/null 2>&1 || {
@@ -34,6 +36,15 @@ assert_contains() {
     pass "$name"
   else
     fail "$name (missing: $expected)"
+  fi
+}
+
+assert_not_contains() {
+  local name="$1" value="$2" unexpected="$3"
+  if printf '%s' "$value" | grep -Fq "$unexpected"; then
+    fail "$name (unexpected: $unexpected)"
+  else
+    pass "$name"
   fi
 }
 
@@ -92,32 +103,31 @@ printf 'do not modify\n' > "$WORKDIR/unrelated.txt"
       --allow-all \
       --no-custom-instructions \
       --output-format json \
-      -p "Use the view tool exactly once to read all of large.txt. If the hook denies it, do not retry or delegate; report the denial briefly."
+      -p "Use the view tool exactly once to read all of large.txt. Do not retry or delegate. Report what the tool result says."
 ) > "$WORKDIR/native-read.jsonl"
 
-if jq -e '
+if ! jq -e '
   select(
     .type == "tool.execution_complete"
     and .data.success == false
-    and ((.data.error.message // "") | contains("Denied by preToolUse hook"))
   )
 ' "$WORKDIR/native-read.jsonl" >/dev/null; then
-  pass "live native read denied"
+  pass "live native read not denied"
 else
-  fail "live native read denied"
+  fail "live native read not denied"
 fi
 
-if jq -e '
-  select(
-    .type == "tool.execution_complete"
-    and .data.success == false
-    and ((.data.error.message // "") | contains("copilot-shunt:bulk-reader"))
-  )
-' "$WORKDIR/native-read.jsonl" >/dev/null; then
-  pass "live hook provides namespaced route"
+NATIVE_OUTPUT=$(jq -r '
+  select(.type == "tool.execution_complete" and .data.success == true)
+  | .data.result.content // empty
+' "$WORKDIR/native-read.jsonl")
+if printf '%s' "$NATIVE_OUTPUT" | grep -Fq "copilot-shunt:bulk-reader"; then
+  pass "live hook provides namespaced soft route"
 else
-  fail "live hook provides namespaced route"
+  fail "live hook provides namespaced soft route"
 fi
+assert_not_contains "live native result omits early raw content" "$NATIVE_OUTPUT" "database=postgres"
+assert_not_contains "live native result omits late raw content" "$NATIVE_OUTPUT" "cache=redis"
 
 (
   cd "$WORKDIR" &&
@@ -126,20 +136,67 @@ fi
       --allow-all \
       --no-custom-instructions \
       --output-format json \
-      -p "Use the bash tool exactly once to run: rtk read large.txt. If the hook denies it, do not retry or delegate; report the denial briefly."
+      -p "Use the bash tool exactly once to run: rtk read large.txt. Do not retry or delegate. Report what the tool result says."
 ) > "$WORKDIR/rtk-read.jsonl"
 
-if jq -e '
+if ! jq -e '
   select(
     .type == "tool.execution_complete"
     and .data.success == false
-    and ((.data.error.message // "") | contains("Denied by preToolUse hook"))
   )
 ' "$WORKDIR/rtk-read.jsonl" >/dev/null; then
-  pass "live RTK read denied"
+  pass "live RTK read not denied"
 else
-  fail "live RTK read denied"
+  fail "live RTK read not denied"
 fi
+
+RTK_OUTPUT=$(jq -r '
+  select(.type == "tool.execution_complete" and .data.success == true)
+  | .data.result.content // empty
+' "$WORKDIR/rtk-read.jsonl")
+assert_contains "live RTK hook provides soft route" "$RTK_OUTPUT" "copilot-shunt:bulk-reader"
+assert_not_contains "live RTK result omits early raw content" "$RTK_OUTPUT" "database=postgres"
+assert_not_contains "live RTK result omits late raw content" "$RTK_OUTPUT" "cache=redis"
+
+(
+  cd "$WORKDIR" &&
+    "$COPILOT_BIN" \
+      --plugin-dir "$PLUGIN_DIR" \
+      --allow-all \
+      --no-custom-instructions \
+      --output-format json \
+      -p "Read large.txt completely and report the exact marker names and values. Follow copilot-shunt routing automatically."
+) > "$WORKDIR/automatic-routing.jsonl"
+
+if ! jq -e '
+  select(
+    .type == "tool.execution_complete"
+    and .data.success == false
+  )
+' "$WORKDIR/automatic-routing.jsonl" >/dev/null; then
+  pass "automatic routing has no denied tool event"
+else
+  fail "automatic routing has no denied tool event"
+fi
+
+if jq -e '
+  select(
+    (.type == "tool.execution_start" or .type == "tool.execution_complete")
+    and ((.data | tostring) | contains("copilot-shunt:bulk-reader"))
+  )
+' "$WORKDIR/automatic-routing.jsonl" >/dev/null; then
+  pass "bulk-reader invoked automatically"
+else
+  fail "bulk-reader invoked automatically"
+fi
+
+AUTOMATIC_OUTPUT=$(jq -r '
+  select(.type == "assistant.message") | .data.content // .data.message // empty
+' "$WORKDIR/automatic-routing.jsonl")
+assert_contains "automatic routing early marker name" "$AUTOMATIC_OUTPUT" "EARLY_MARKER"
+assert_contains "automatic routing early marker value" "$AUTOMATIC_OUTPUT" "database=postgres"
+assert_contains "automatic routing late marker name" "$AUTOMATIC_OUTPUT" "LATE_MARKER"
+assert_contains "automatic routing late marker value" "$AUTOMATIC_OUTPUT" "cache=redis"
 
 (
   cd "$WORKDIR" &&

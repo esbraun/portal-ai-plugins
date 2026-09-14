@@ -38,26 +38,26 @@ Use `/env` to confirm that `copilot-shunt`, both agents, and the hook were loade
 
 The plugin has two deliberately different routing paths:
 
-- **Bulk reading is hook-gated.** `bulk-reader` has `infer: false`. An unbounded read of a
-  readable file over the configured line threshold is denied by the `preToolUse` hook, which
-  names `copilot-shunt:bulk-reader` as the next command. The hook is the deterministic first
-  stage; explicit agent invocation is the second stage because Copilot hooks cannot replace a
-  tool call with an agent call.
+- **Bulk reading uses inferred routing with a soft hook fallback.** `bulk-reader` has `infer: true`,
+  so the parent can delegate whole-file summaries, broad discovery, and multi-file questions
+  before attempting a read. If it still performs an unbounded read over the configured threshold,
+  a `postToolUse` hook replaces the raw result before the parent model sees it and asks the parent
+  to delegate the current question and paths.
 - **Boilerplate generation is choice-gated.** `code-writer` keeps `infer: true` because deciding
   whether a task is predictable pattern-based generation requires model judgment. It can also be
   selected explicitly for repeatable automation.
 
-Compared with the initial implementation, bulk-reader inference is no longer part of the
-contract. The read gate now handles RTK-wrapped commands, multiple file operands, escaped or
-quoted paths, and bounded native `view` ranges. Authenticated integration coverage also verifies
-the hook path before exercising either agent directly.
+Copilot hooks cannot replace a tool call with an agent call. The soft gate therefore preserves
+context isolation and gives the parent a routing signal without surfacing a failed tool call, but
+the follow-up delegation is still model-driven. Exact bounded reads remain available when editing
+or debugging requires source fidelity rather than a worker summary.
 
 ## Agents
 
 ### bulk-reader
 
-The read hook routes files over 350 lines to this agent. It is deliberately not inference-driven:
-the deterministic line threshold activates it, or you can request it explicitly:
+The parent can infer this agent for files over 350 lines, questions across three or more files,
+and large diff summaries. You can also request it explicitly:
 
 ```text
 Use the bulk-reader agent to identify the database calls in src/service.ts and src/store.ts.
@@ -119,9 +119,9 @@ Replace either model string with any model the account and organization policy p
 authored default is unavailable, Copilot's preferred-model policy can fall back to the session
 model.
 
-## Read gate
+## Read soft gate
 
-The `preToolUse` hook denies:
+The `postToolUse` hook replaces the result of:
 
 - Native `view` calls for readable files over 350 lines
 - Direct `cat`, `head`, `tail`, `less`, and `more` reads of those files
@@ -133,13 +133,18 @@ export COPILOT_SHUNT_MIN_LINES=500
 copilot
 ```
 
-The gate permits native `view` ranges of at most 300 lines so the bulk-reader can inspect a large
-file in deterministic windows. It intentionally allows pipes, redirections, compound commands,
-and `sed`; this is a behavioral routing aid, not a security boundary or a complete shell parser.
+The replacement tells the parent to delegate its current question and attempted paths to
+`copilot-shunt:bulk-reader`. The original tool succeeds locally, but its oversized raw output is
+not passed to the parent model. This optimizes model context and cost rather than filesystem I/O.
 
-The hook is the deterministic first stage: it blocks the oversized read and names
-`copilot-shunt:bulk-reader` in the denial. Copilot hooks cannot replace one tool call with an
-agent call, so invoking that named agent is the explicit second stage.
+The gate permits native `view` ranges of at most 300 lines so the bulk-reader can inspect a large
+file in deterministic windows and the parent can inspect exact source for editing or debugging.
+It intentionally allows pipes, redirections, compound commands, and `sed`; this is a behavioral
+routing aid, not a security boundary or a complete shell parser.
+
+Copilot hooks can modify arguments or results, but cannot replace a tool call with an agent call.
+Inference may route before the read; otherwise the rewritten result prompts the parent to
+reconsider and delegate. This is cooperative rather than an atomic redirect.
 
 ## RTK interaction
 
@@ -149,9 +154,9 @@ when RTK is absent.
 
 When RTK is installed:
 
-- In the parent agent, unbounded `rtk read`, RTK-wrapped `cat`, and `rtk proxy` forms of
-  `cat`, `head`, `tail`, `less`, and `more` are checked against the same line threshold as their
-  native forms. Every parsed file operand is checked.
+- In the parent agent, results from unbounded `rtk read`, RTK-wrapped `cat`, and `rtk proxy` forms
+  of `cat`, `head`, `tail`, `less`, and `more` are checked against the same line threshold as
+  their native forms. Every parsed file operand is checked.
 - Small files remain readable. Pipes, redirections, compound commands, metadata commands, and
   bounded alternatives remain outside the gate's intentionally narrow scope.
 - Inside `bulk-reader`, RTK is skipped. File contents are read through native `view_range`
@@ -173,8 +178,8 @@ bash plugins/copilot-shunt/evals/run.sh
 ```
 
 Authenticated integration checks create a disposable fixture repository. They verify plugin
-loading and live hook behavior first, then run secondary explicit-command smoke tests for both
-agents and the authored worker model:
+loading, live soft routing, inferred bulk-reader delegation, both agents, and the authored worker
+model:
 
 ```bash
 bash plugins/copilot-shunt/evals/integration.sh
