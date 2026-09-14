@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Behavioral guard for GitHub Copilot CLI. Blocks common unbounded reads of
-# large files and tells the parent agent to use the bulk-reader subagent.
+# Behavioral routing aid for GitHub Copilot CLI. Replaces successful unbounded
+# reads of large files before their contents enter the parent model's context.
 #
-# Deliberately fail open for malformed or inapplicable input: Copilot CLI
-# treats a non-zero preToolUse hook exit as a denial.
+# Deliberately fail open for malformed or inapplicable input.
 
 MIN_LINES="${COPILOT_SHUNT_MIN_LINES:-350}"
 case "$MIN_LINES" in
@@ -15,9 +14,22 @@ allow() {
   exit 0
 }
 
-deny() {
-  jq -cn --arg reason "$1" \
-    '{permissionDecision:"deny", permissionDecisionReason:$reason}'
+reroute() {
+  local path="$1" lines="$2"
+  jq -cn --arg path "$path" --arg lines "$lines" --arg threshold "$MIN_LINES" '
+    {
+      modifiedResult: {
+        resultType: "success",
+        textResultForLlm: (
+          "copilot-shunt withheld an unbounded read of " + $path + " (" + $lines
+          + " lines; threshold: " + $threshold + ") from the parent context. "
+          + "Delegate the user'\''s current question and the attempted file path(s) to the "
+          + "copilot-shunt:bulk-reader agent. If exact source is required for editing or "
+          + "debugging, inspect only the relevant bounded view_range of at most 300 lines."
+        )
+      }
+    }
+  '
   exit 0
 }
 
@@ -55,7 +67,7 @@ check_path() {
   lines=$(wc -l < "$resolved_path" 2>/dev/null | tr -d '[:space:]') || return 1
   case "$lines" in ''|*[!0-9]*) return 1 ;; esac
   if [ "$lines" -gt "$MIN_LINES" ]; then
-    deny "File is ${lines} lines (threshold: ${MIN_LINES}). Delegate the question and paths to the copilot-shunt:bulk-reader agent. If exact content is needed for an edit, inspect only the relevant bounded range."
+    reroute "$supplied_path" "$lines"
   fi
   return 1
 }

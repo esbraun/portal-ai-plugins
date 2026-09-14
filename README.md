@@ -19,7 +19,9 @@ The marketplace also ships **shunt** (Claude Code only for now): a plugin that r
 
 For GitHub Copilot CLI, the standalone
 [`copilot-shunt`](plugins/copilot-shunt/README.md) plugin provides similar context isolation with
-native Copilot subagents and no Portal dependency.
+native Copilot subagents and no Portal dependency. It uses inferred delegation plus a soft
+post-read result gate, avoiding hard tool failures while keeping oversized contents out of the
+parent model's context.
 
 ## Installation
 
