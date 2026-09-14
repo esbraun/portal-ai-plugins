@@ -17,6 +17,10 @@ diagnostics, and invoke Portal actions.
 
 The marketplace also ships **shunt** (Claude Code only for now): a plugin that routes I/O-heavy agent work — bulk file reads and boilerplate generation — to AiKA modes running cheaper worker models, via the Portal CLI actions registry. See [`plugins/shunt/README.md`](plugins/shunt/README.md).
 
+For GitHub Copilot CLI, the standalone
+[`copilot-shunt`](plugins/copilot-shunt/README.md) plugin provides similar context isolation with
+native Copilot subagents and no Portal dependency.
+
 ## Installation
 
 ### Claude Code
